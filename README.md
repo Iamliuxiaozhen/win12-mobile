@@ -48,6 +48,9 @@ iOS 需要 macOS、Xcode 和 CocoaPods。如果在非 macOS 环境执行
 在 GitHub 的 Actions 页面选择 `Manual Release`，填写 tag、版本名和
 Android version code 后运行即可创建草稿 Release。
 
+推送到 `main` 或向 `main` 发起 Pull Request 时，会自动运行
+`.github/workflows/build-test.yml` 做 Android 和 iOS 构建测试，不创建发版。
+
 工作流会上传以下产物：
 
 - Android：`.apk`、`.aab`、`.apks`

@@ -47,6 +47,10 @@ This repository includes a GitHub Actions workflow at
 `Manual Release`, fill in the tag, version name, and Android version code, then
 run the workflow to create a draft GitHub Release.
 
+Pushes to `main` and pull requests targeting `main` automatically run
+`.github/workflows/build-test.yml` for Android and iOS build tests without
+creating a release.
+
 The workflow uploads these artifacts:
 
 - Android: `.apk`, `.aab`, `.apks`
