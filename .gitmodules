@@ -1,0 +1,3 @@
+[submodule "win12-code"]
+	path = win12-code
+	url = https://github.com/win12-online/win12.git

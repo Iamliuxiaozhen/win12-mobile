@@ -1,0 +1,21 @@
+{
+  "name": "win12-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mobile wrapper for win12-online/win12 using Capacitor.",
+  "type": "module",
+  "scripts": {
+    "prepare:web": "node scripts/prepare-web.mjs",
+    "sync": "npm run prepare:web && npx cap sync",
+    "open:android": "npm run sync && npx cap open android",
+    "open:ios": "npm run sync && npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/ios": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3"
+  }
+}

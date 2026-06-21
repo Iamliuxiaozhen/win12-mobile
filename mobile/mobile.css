@@ -1,0 +1,57 @@
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+html.win12-mobile-shell,
+html.win12-mobile-shell body {
+  min-width: 0 !important;
+  width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html.win12-mobile-shell body {
+  padding:
+    var(--safe-top)
+    var(--safe-right)
+    var(--safe-bottom)
+    var(--safe-left);
+  box-sizing: border-box;
+}
+
+html.win12-mobile-shell input,
+html.win12-mobile-shell textarea,
+html.win12-mobile-shell [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+html.win12-mobile-shell .window,
+html.win12-mobile-shell .app-window,
+html.win12-mobile-shell [class*="window"] {
+  max-width: calc(100vw - var(--safe-left) - var(--safe-right)) !important;
+  max-height: calc(100vh - var(--safe-top) - var(--safe-bottom)) !important;
+}
+
+@media (max-width: 768px) {
+  html.win12-mobile-shell body {
+    font-size: 14px;
+  }
+
+  html.win12-mobile-shell .desktop {
+    width: 100vw !important;
+    height: 100vh !important;
+  }
+
+  html.win12-mobile-shell .taskbar,
+  html.win12-mobile-shell [class*="taskbar"] {
+    padding-bottom: max(6px, var(--safe-bottom)) !important;
+  }
+}
