@@ -1,17 +1,19 @@
 # win12-mobile
 
-Win12 Mobile wraps [win12-online/win12](https://github.com/win12-online/win12)
-as a Capacitor app for Android and iOS.
+Win12 Mobile 将 [win12-online/win12](https://github.com/win12-online/win12)
+封装为基于 Capacitor 的移动端应用，覆盖 Android 和 iOS。
 
-## Repository layout
+English documentation: [README-en_US.md](./README-en_US.md)
 
-- `win12-code/`: Git submodule containing the upstream Win12 web app.
-- `mobile/`: Mobile WebView overrides for safe areas, viewport behavior, and touch usage.
-- `www/`: Generated web assets consumed by Capacitor. Do not edit this directory by hand.
-- `android/`: Generated Capacitor Android project.
-- `ios/`: Generated Capacitor iOS project.
+## 仓库结构
 
-## Setup
+- `win12-code/`：上游 Win12 Web 项目的 Git 子模块。
+- `mobile/`：移动端 WebView 适配补丁，包含安全区域、视口和触控行为处理。
+- `www/`：由脚本生成的 Capacitor Web 资源目录，请不要手动修改。
+- `android/`：Capacitor 生成的 Android 原生工程。
+- `ios/`：Capacitor 生成的 iOS 原生工程。
+
+## 初始化
 
 ```bash
 git submodule update --init --recursive
@@ -19,7 +21,7 @@ npm install
 npm run sync
 ```
 
-## Development
+## 开发命令
 
 ```bash
 npm run prepare:web
@@ -28,14 +30,14 @@ npx cap open android
 npx cap open ios
 ```
 
-`npm run prepare:web` copies the static Win12 source from `win12-code` into
-`www` and injects the mobile bridge assets. Run `npm run sync` after updating
-the submodule or files under `mobile/`.
+`npm run prepare:web` 会把 `win12-code` 中的静态 Win12 源码复制到 `www`，
+并注入移动端桥接资源。更新子模块或 `mobile/` 目录后，请重新执行
+`npm run sync`。
 
-## Platform notes
+## 平台说明
 
-Android can be opened from any environment with Android Studio installed.
+Android 工程可以在安装了 Android Studio 的环境中打开。
 
-iOS requires macOS with Xcode and CocoaPods. If `npx cap add ios` or
-`npx cap sync ios` is run outside macOS, Capacitor can still generate the
-project but will skip CocoaPods and Xcode cleanup steps.
+iOS 需要 macOS、Xcode 和 CocoaPods。如果在非 macOS 环境执行
+`npx cap add ios` 或 `npx cap sync ios`，Capacitor 仍可生成项目文件，
+但会跳过 CocoaPods 安装和 Xcode 清理步骤。
