@@ -1,0 +1,267 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+        type: string
+      version_name:
+        description: App version name
+        required: true
+        default: 0.1.0
+        type: string
+      version_code:
+        description: Android version code
+        required: true
+        default: "1"
+        type: string
+      release_name:
+        description: Release title
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+  JAVA_VERSION: "21"
+  VERSION_NAME: ${{ inputs.version_name }}
+  VERSION_CODE: ${{ inputs.version_code }}
+
+jobs:
+  android:
+    name: Android packages
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare Android signing
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/android-release.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=${ANDROID_KEY_ALIAS}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=${ANDROID_KEY_PASSWORD}" >> "$GITHUB_ENV"
+
+      - name: Prepare temporary Android signing
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 == '' }}
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore "$RUNNER_TEMP/android-temporary.keystore" \
+            -storepass temporary-release-password \
+            -alias temporary-release \
+            -keypass temporary-release-password \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Win12 Mobile, OU=Release, O=Win12 Online, L=Unknown, S=Unknown, C=CN"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-temporary.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=temporary-release-password" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=temporary-release" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=temporary-release-password" >> "$GITHUB_ENV"
+
+      - name: Sync Capacitor
+        run: npm run sync
+
+      - name: Build APK and AAB
+        working-directory: android
+        run: ./gradlew assembleRelease bundleRelease
+
+      - name: Generate universal APKS
+        run: |
+          curl -L -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar
+          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
+            --bundle android/app/build/outputs/bundle/release/app-release.aab \
+            --output "$RUNNER_TEMP/win12-mobile-${VERSION_NAME}.apks" \
+            --mode universal \
+            --ks "$ANDROID_KEYSTORE_PATH" \
+            --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --key-pass "pass:$ANDROID_KEY_PASSWORD"
+          mkdir -p release-artifacts/android
+          cp android/app/build/outputs/apk/release/*.apk "release-artifacts/android/win12-mobile-${VERSION_NAME}.apk"
+          cp android/app/build/outputs/bundle/release/*.aab "release-artifacts/android/win12-mobile-${VERSION_NAME}.aab"
+          cp "$RUNNER_TEMP/win12-mobile-${VERSION_NAME}.apks" release-artifacts/android/
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-packages
+          path: release-artifacts/android/*
+          if-no-files-found: error
+
+  ios:
+    name: iOS package
+    runs-on: macos-latest
+    env:
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD || 'ad-hoc' }}
+      IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.IOS_PROVISIONING_PROFILE_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync Capacitor
+        run: npm run sync
+
+      - name: Install CocoaPods dependencies
+        working-directory: ios/App
+        run: pod install
+
+      - name: Set iOS version
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION_NAME}" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION_CODE}" ios/App/App/Info.plist
+
+      - name: Prepare iOS signing
+        id: ios_signing
+        if: ${{ env.IOS_CERTIFICATE_P12_BASE64 != '' && env.IOS_PROVISIONING_PROFILE_BASE64 != '' }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/release-certificate.p12"
+          PROFILE_PATH="$RUNNER_TEMP/release.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          echo "${IOS_CERTIFICATE_P12_BASE64}" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "${IOS_PROVISIONING_PROFILE_BASE64}" | base64 --decode > "$PROFILE_PATH"
+
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          security cms -D -i "$PROFILE_PATH" > "$RUNNER_TEMP/profile.plist"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/profile.plist")"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          echo "profile_uuid=$PROFILE_UUID" >> "$GITHUB_OUTPUT"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build unsigned iOS archive
+        if: ${{ steps.ios_signing.outputs.enabled != 'true' }}
+        run: |
+          mkdir -p release-artifacts/ios
+          xcodebuild archive \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/Win12Mobile.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Win12Mobile.xcarchive" \
+            "release-artifacts/ios/win12-mobile-${VERSION_NAME}-unsigned.xcarchive.zip"
+
+      - name: Build signed IPA
+        if: ${{ steps.ios_signing.outputs.enabled == 'true' }}
+        run: |
+          mkdir -p release-artifacts/ios
+          xcodebuild archive \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/Win12Mobile.xcarchive" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROVISIONING_PROFILE_NAME"
+
+          cat > "$RUNNER_TEMP/export-options.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>${IOS_EXPORT_METHOD}</string>
+            <key>teamID</key>
+            <string>${IOS_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>online.win12.mobile</key>
+              <string>${IOS_PROVISIONING_PROFILE_NAME}</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Win12Mobile.xcarchive" \
+            -exportPath release-artifacts/ios \
+            -exportOptionsPlist "$RUNNER_TEMP/export-options.plist"
+          mv release-artifacts/ios/*.ipa "release-artifacts/ios/win12-mobile-${VERSION_NAME}.ipa"
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-package
+          path: release-artifacts/ios/*
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - android
+      - ios
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.release_name || inputs.tag }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: release-artifacts/*
