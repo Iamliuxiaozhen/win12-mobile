@@ -1,4 +1,5 @@
 # win12-mobile
+>This repository is currently maintained by a third party (myself, Oliver Lin); I may discuss merging it into `win12-online` with the official team later to make it the official repository.
 
 Win12 Mobile wraps [win12-online/win12](https://github.com/win12-online/win12)
 as a Capacitor app for Android and iOS.
