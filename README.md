@@ -1,5 +1,7 @@
 # win12-mobile
 
+>此仓库目前由第三方（也就是我 Oliver Lin）维护，此后我可能会与官方讨论并入`win12-online`成为官方仓库。
+
 Win12 Mobile 将 [win12-online/win12](https://github.com/win12-online/win12)
 封装为基于 Capacitor 的移动端应用，覆盖 Android 和 iOS。
 
