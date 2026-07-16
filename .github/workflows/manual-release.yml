@@ -63,32 +63,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare Android signing
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+      - name: Validate Android signing secrets
+        shell: bash
         run: |
-          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/android-release.keystore"
-          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-release.keystore" >> "$GITHUB_ENV"
-          echo "ANDROID_KEYSTORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_ALIAS=${ANDROID_KEY_ALIAS}" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_PASSWORD=${ANDROID_KEY_PASSWORD}" >> "$GITHUB_ENV"
+          set -euo pipefail
 
-      - name: Prepare temporary Android signing
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 == '' }}
+          missing=()
+          [[ -n "$ANDROID_KEYSTORE_BASE64" ]] || missing+=(ANDROID_KEYSTORE_BASE64)
+          [[ -n "$ANDROID_KEYSTORE_PASSWORD" ]] || missing+=(ANDROID_KEYSTORE_PASSWORD)
+          [[ -n "$ANDROID_KEY_ALIAS" ]] || missing+=(ANDROID_KEY_ALIAS)
+          [[ -n "$ANDROID_KEY_PASSWORD" ]] || missing+=(ANDROID_KEY_PASSWORD)
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required GitHub Actions secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Prepare Android signing
+        shell: bash
         run: |
-          keytool -genkeypair \
-            -v \
-            -keystore "$RUNNER_TEMP/android-temporary.keystore" \
-            -storepass temporary-release-password \
-            -alias temporary-release \
-            -keypass temporary-release-password \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Win12 Mobile, OU=Release, O=Win12 Online, L=Unknown, S=Unknown, C=CN"
-          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/android-temporary.keystore" >> "$GITHUB_ENV"
-          echo "ANDROID_KEYSTORE_PASSWORD=temporary-release-password" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_ALIAS=temporary-release" >> "$GITHUB_ENV"
-          echo "ANDROID_KEY_PASSWORD=temporary-release-password" >> "$GITHUB_ENV"
+          set -euo pipefail
+
+          KEYSTORE_PATH="$RUNNER_TEMP/android-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" >/dev/null
+
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Sync Capacitor
         run: npm run sync
@@ -264,4 +268,4 @@ jobs:
           draft: true
           prerelease: false
           generate_release_notes: true
-          files: release-artifacts/*
+          files: release-artifacts/**/*
