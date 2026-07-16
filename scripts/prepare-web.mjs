@@ -8,6 +8,7 @@ const target = path.join(root, 'www');
 
 const copiedEntries = [
   '404.html',
+  'apps',
   'base.css',
   'bg-dark.svg',
   'bg.svg',
