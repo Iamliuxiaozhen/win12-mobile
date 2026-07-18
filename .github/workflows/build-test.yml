@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
-  pull-requests: write
 
 env:
   NODE_VERSION: "20"
@@ -23,6 +21,8 @@ jobs:
   android:
     name: Android build test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       package-id: ${{ steps.android_package.outputs.artifact-id }}
       log-id: ${{ steps.android_logs.outputs.artifact-id }}
@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -99,6 +100,8 @@ jobs:
   ios:
     name: iOS build test
     runs-on: macos-latest
+    permissions:
+      contents: read
     outputs:
       package-id: ${{ steps.ios_package.outputs.artifact-id }}
       log-id: ${{ steps.ios_logs.outputs.artifact-id }}
@@ -108,6 +111,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -178,6 +182,9 @@ jobs:
     name: Report result to pull request
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     needs:
       - android
       - ios
