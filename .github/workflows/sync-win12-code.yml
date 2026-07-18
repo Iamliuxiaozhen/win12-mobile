@@ -1,0 +1,75 @@
+name: Sync win12-code
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-win12-code-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync submodules and push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main with all submodules
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Update win12-code and its submodules
+        id: update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          old_revision="$(git rev-parse HEAD:win12-code)"
+
+          git submodule sync --recursive
+          git submodule update --init --remote win12-code
+          git -C win12-code submodule sync --recursive
+          git -C win12-code submodule update --init --recursive
+
+          new_revision="$(git -C win12-code rev-parse HEAD)"
+          short_revision="$(git -C win12-code rev-parse --short HEAD)"
+
+          echo "old_revision=$old_revision" >> "$GITHUB_OUTPUT"
+          echo "new_revision=$new_revision" >> "$GITHUB_OUTPUT"
+          echo "short_revision=$short_revision" >> "$GITHUB_OUTPUT"
+
+          if [[ "$old_revision" == "$new_revision" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            printf 'chore: sync win12-code [%s]\n\n' "$short_revision"
+            printf 'win12-code commits:\n'
+            git -C win12-code log \
+              --reverse \
+              --format='- [%h] %s' \
+              "$old_revision..$new_revision"
+          } > "$RUNNER_TEMP/commit-message.txt"
+
+      - name: Commit the synchronized revision
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add win12-code
+          git commit --file "$RUNNER_TEMP/commit-message.txt"
+
+      - name: Push to main
+        if: steps.update.outputs.changed == 'true'
+        shell: bash
+        run: git push origin HEAD:main
