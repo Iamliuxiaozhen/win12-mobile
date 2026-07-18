@@ -182,7 +182,46 @@ jobs:
       - android
       - ios
     steps:
+      - name: Write build result summary
+        uses: actions/github-script@v7
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          ANDROID_PACKAGE_ID: ${{ needs.android.outputs.package-id }}
+          IOS_PACKAGE_ID: ${{ needs.ios.outputs.package-id }}
+          ANDROID_LOG_ID: ${{ needs.android.outputs.log-id }}
+          IOS_LOG_ID: ${{ needs.ios.outputs.log-id }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactUrl = id => `${runUrl}/artifacts/${id}`;
+            const androidResult = process.env.ANDROID_RESULT;
+            const iosResult = process.env.IOS_RESULT;
+            const successCount = [androidResult, iosResult].filter(result => result === 'success').length;
+            const title = successCount === 2 ? '✅ 构建成功' : successCount === 1 ? '⚠️ 构建部分失败' : '❌ 构建失败';
+            const lines = [`## ${title}`, ''];
+
+            const addPlatform = (name, result, packageId, logId, packageLabel) => {
+              lines.push(`### ${name}：${result}`);
+              if (result === 'success' && packageId) {
+                lines.push(`- [${packageLabel}](${artifactUrl(packageId)})`);
+              } else if (logId) {
+                lines.push(`- [下载 ${name} 失败日志](${artifactUrl(logId)})`);
+              } else {
+                lines.push('- 未生成可下载产物，请查看完整工作流日志。');
+              }
+              lines.push('');
+            };
+
+            addPlatform('Android', androidResult, process.env.ANDROID_PACKAGE_ID, process.env.ANDROID_LOG_ID, '下载 Android 临时签名安装包');
+            addPlatform('iOS', iosResult, process.env.IOS_PACKAGE_ID, process.env.IOS_LOG_ID, '下载 iOS 未签名归档');
+            lines.push(`- [查看并下载完整工作流日志](${runUrl})`, '');
+            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，未使用 GitHub Actions Secrets 中的私钥；不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
+
+            await core.summary.addRaw(lines.join('\n')).write();
+
       - name: Create or update pull request comment
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/github-script@v7
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
@@ -196,32 +235,38 @@ jobs:
             const marker = '<!-- win12-mobile-pr-build -->';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const artifactUrl = id => `${runUrl}/artifacts/${id}`;
-            const succeeded = process.env.ANDROID_RESULT === 'success' && process.env.IOS_RESULT === 'success';
-            const lines = [marker, succeeded ? '## ✅ 构建成功' : '## ❌ 构建失败', ''];
+            const androidResult = process.env.ANDROID_RESULT;
+            const iosResult = process.env.IOS_RESULT;
+            const successCount = [androidResult, iosResult].filter(result => result === 'success').length;
+            const title = successCount === 2 ? '✅ 构建成功' : successCount === 1 ? '⚠️ 构建部分失败' : '❌ 构建失败';
+            const lines = [marker, `## ${title}`, ''];
 
-            lines.push(`- Android：${process.env.ANDROID_RESULT}`);
-            lines.push(`- iOS：${process.env.IOS_RESULT}`);
-            lines.push('');
+            const addPlatform = (name, result, packageId, logId, packageLabel) => {
+              lines.push(`### ${name}：${result}`);
+              if (result === 'success' && packageId) {
+                lines.push(`- [${packageLabel}](${artifactUrl(packageId)})`);
+              } else if (logId) {
+                lines.push(`- [下载 ${name} 失败日志](${artifactUrl(logId)})`);
+              } else {
+                lines.push('- 未生成可下载产物，请查看完整工作流日志。');
+              }
+              lines.push('');
+            };
 
-            if (succeeded) {
-              lines.push(`- [下载 Android 临时签名安装包](${artifactUrl(process.env.ANDROID_PACKAGE_ID)})`);
-              lines.push(`- [下载 iOS 未签名归档](${artifactUrl(process.env.IOS_PACKAGE_ID)})`);
-              lines.push('', '> Android APK 仅使用本次 runner 临时生成的 debug 签名，有效期 7 天；未使用 GitHub Actions Secrets 中的私钥。');
-            } else {
-              if (process.env.ANDROID_LOG_ID) lines.push(`- [下载 Android 失败日志](${artifactUrl(process.env.ANDROID_LOG_ID)})`);
-              if (process.env.IOS_LOG_ID) lines.push(`- [下载 iOS 失败日志](${artifactUrl(process.env.IOS_LOG_ID)})`);
-              lines.push(`- [查看并下载完整工作流日志](${runUrl})`);
-              lines.push('', '> 日志产物保留 7 天。');
-            }
+            addPlatform('Android', androidResult, process.env.ANDROID_PACKAGE_ID, process.env.ANDROID_LOG_ID, '下载 Android 临时签名安装包');
+            addPlatform('iOS', iosResult, process.env.IOS_PACKAGE_ID, process.env.IOS_LOG_ID, '下载 iOS 未签名归档');
+            lines.push(`- [查看并下载完整工作流日志](${runUrl})`, '');
+            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，未使用 GitHub Actions Secrets 中的私钥；不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
 
             const body = lines.join('\n');
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              per_page: 100,
             });
             const previous = comments.find(comment =>
-              comment.user.type === 'Bot' && comment.body.includes(marker)
+              comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker)
             );
 
             if (previous) {
