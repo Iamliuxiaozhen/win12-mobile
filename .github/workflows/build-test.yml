@@ -263,7 +263,7 @@ jobs:
             addPlatform('Android', androidResult, process.env.ANDROID_PACKAGE_ID, process.env.ANDROID_LOG_ID, '下载 Android 临时签名安装包');
             addPlatform('iOS', iosResult, process.env.IOS_PACKAGE_ID, process.env.IOS_LOG_ID, '下载 iOS 未签名归档');
             lines.push(`- [查看并下载完整工作流日志](${runUrl})`, '');
-            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，未使用 GitHub Actions Secrets 中的私钥；不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
+            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
 
             const body = lines.join('\n');
             const comments = await github.paginate(github.rest.issues.listComments, {
