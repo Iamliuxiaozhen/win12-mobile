@@ -50,12 +50,14 @@ jobs:
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
           {
-            printf 'chore: sync win12-code [%s]\n\n' "$short_revision"
+            printf 'sync win12-code\n\n'
+            printf 'win12-code: [%s]\n\n' "$short_revision"
             printf 'win12-code commits:\n'
             git -C win12-code log \
               --reverse \
               --format='- [%h] %s' \
-              "$old_revision..$new_revision"
+              "$old_revision..$new_revision" \
+              | sed -E 's/#([0-9]+)/win12-online\/win12\/pull\/\1/g'
           } > "$RUNNER_TEMP/commit-message.txt"
 
       - name: Commit the synchronized revision
