@@ -23,7 +23,7 @@ public class MainActivity extends BridgeActivity {
                     (orientation >= 225 && orientation <= 315);
 
                 if (deviceIsLandscape) {
-                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
                     disable();
                 }
             }

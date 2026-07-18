@@ -5,26 +5,13 @@ import Capacitor
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
-    private var orientationUnlocked = false
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleDeviceOrientationChange),
-            name: UIDevice.orientationDidChangeNotification,
-            object: nil
-        )
         return true
     }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        return orientationUnlocked ? .all : .landscape
-    }
-
-    @objc private func handleDeviceOrientationChange() {
-        guard !orientationUnlocked, UIDevice.current.orientation.isLandscape else { return }
-        orientationUnlocked = true
+        return .landscape
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
