@@ -21,12 +21,18 @@ jobs:
   android:
     name: Android build test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      package-id: ${{ steps.android_package.outputs.artifact-id }}
+      log-id: ${{ steps.android_logs.outputs.artifact-id }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,24 +48,70 @@ jobs:
           cache: gradle
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          npm ci 2>&1 | tee ci-logs/npm-ci.log
 
       - name: Sync Capacitor
-        run: npm run sync
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run sync 2>&1 | tee ci-logs/capacitor-sync.log
 
-      - name: Build Android debug
+      # assembleDebug uses the disposable debug keystore generated on this runner.
+      # It deliberately does not read a release key or any signing secret.
+      - name: Build temporarily signed Android APK
+        shell: bash
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../ci-logs/android-build.log
+
+      - name: Collect Android package
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts/android
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            ci-artifacts/android/win12-mobile-pr-${{ github.event.pull_request.number || github.run_number }}.apk
+
+      - name: Upload Android package
+        id: android_package
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-install-package
+          path: ci-artifacts/android/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Android failure logs
+        id: android_logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-failure-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
   ios:
     name: iOS build test
     runs-on: macos-latest
+    permissions:
+      contents: read
+    outputs:
+      package-id: ${{ steps.ios_package.outputs.artifact-id }}
+      log-id: ${{ steps.ios_logs.outputs.artifact-id }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -68,20 +120,174 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          npm ci 2>&1 | tee ci-logs/npm-ci.log
 
       - name: Sync Capacitor
-        run: npm run sync
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run sync 2>&1 | tee ci-logs/capacitor-sync.log
 
       - name: Install CocoaPods dependencies
+        shell: bash
         working-directory: ios/App
-        run: pod install
+        run: |
+          set -o pipefail
+          pod install 2>&1 | tee ../../ci-logs/pod-install.log
 
       - name: Build unsigned iOS archive
+        shell: bash
         run: |
+          set -o pipefail
           xcodebuild archive \
             -workspace ios/App/App.xcworkspace \
             -scheme App \
             -configuration Debug \
             -archivePath "$RUNNER_TEMP/Win12Mobile-CI.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee ci-logs/ios-build.log
+
+      - name: Package unsigned iOS archive
+        if: ${{ success() }}
+        run: |
+          mkdir -p ci-artifacts/ios
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/Win12Mobile-CI.xcarchive" \
+            "ci-artifacts/ios/win12-mobile-pr-${{ github.event.pull_request.number || github.run_number }}-unsigned.xcarchive.zip"
+
+      - name: Upload unsigned iOS archive
+        id: ios_package
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-archive
+          path: ci-artifacts/ios/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload iOS failure logs
+        id: ios_logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-failure-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    name: Report result to pull request
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    needs:
+      - android
+      - ios
+    steps:
+      - name: Write build result summary
+        uses: actions/github-script@v7
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          ANDROID_PACKAGE_ID: ${{ needs.android.outputs.package-id }}
+          IOS_PACKAGE_ID: ${{ needs.ios.outputs.package-id }}
+          ANDROID_LOG_ID: ${{ needs.android.outputs.log-id }}
+          IOS_LOG_ID: ${{ needs.ios.outputs.log-id }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactUrl = id => `${runUrl}/artifacts/${id}`;
+            const androidResult = process.env.ANDROID_RESULT;
+            const iosResult = process.env.IOS_RESULT;
+            const successCount = [androidResult, iosResult].filter(result => result === 'success').length;
+            const title = successCount === 2 ? '✅ 构建成功' : successCount === 1 ? '⚠️ 构建部分失败' : '❌ 构建失败';
+            const lines = [`## ${title}`, ''];
+
+            const addPlatform = (name, result, packageId, logId, packageLabel) => {
+              lines.push(`### ${name}：${result}`);
+              if (result === 'success' && packageId) {
+                lines.push(`- [${packageLabel}](${artifactUrl(packageId)})`);
+              } else if (logId) {
+                lines.push(`- [下载 ${name} 失败日志](${artifactUrl(logId)})`);
+              } else {
+                lines.push('- 未生成可下载产物，请查看完整工作流日志。');
+              }
+              lines.push('');
+            };
+
+            addPlatform('Android', androidResult, process.env.ANDROID_PACKAGE_ID, process.env.ANDROID_LOG_ID, '下载 Android 临时签名安装包');
+            addPlatform('iOS', iosResult, process.env.IOS_PACKAGE_ID, process.env.IOS_LOG_ID, '下载 iOS 未签名归档');
+            lines.push(`- [查看并下载完整工作流日志](${runUrl})`, '');
+            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，未使用 GitHub Actions Secrets 中的私钥；不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
+
+            await core.summary.addRaw(lines.join('\n')).write();
+
+      - name: Create or update pull request comment
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/github-script@v7
+        env:
+          ANDROID_RESULT: ${{ needs.android.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+          ANDROID_PACKAGE_ID: ${{ needs.android.outputs.package-id }}
+          IOS_PACKAGE_ID: ${{ needs.ios.outputs.package-id }}
+          ANDROID_LOG_ID: ${{ needs.android.outputs.log-id }}
+          IOS_LOG_ID: ${{ needs.ios.outputs.log-id }}
+        with:
+          script: |
+            const marker = '<!-- win12-mobile-pr-build -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactUrl = id => `${runUrl}/artifacts/${id}`;
+            const androidResult = process.env.ANDROID_RESULT;
+            const iosResult = process.env.IOS_RESULT;
+            const successCount = [androidResult, iosResult].filter(result => result === 'success').length;
+            const title = successCount === 2 ? '✅ 构建成功' : successCount === 1 ? '⚠️ 构建部分失败' : '❌ 构建失败';
+            const lines = [marker, `## ${title}`, ''];
+
+            const addPlatform = (name, result, packageId, logId, packageLabel) => {
+              lines.push(`### ${name}：${result}`);
+              if (result === 'success' && packageId) {
+                lines.push(`- [${packageLabel}](${artifactUrl(packageId)})`);
+              } else if (logId) {
+                lines.push(`- [下载 ${name} 失败日志](${artifactUrl(logId)})`);
+              } else {
+                lines.push('- 未生成可下载产物，请查看完整工作流日志。');
+              }
+              lines.push('');
+            };
+
+            addPlatform('Android', androidResult, process.env.ANDROID_PACKAGE_ID, process.env.ANDROID_LOG_ID, '下载 Android 临时签名安装包');
+            addPlatform('iOS', iosResult, process.env.IOS_PACKAGE_ID, process.env.IOS_LOG_ID, '下载 iOS 未签名归档');
+            lines.push(`- [查看并下载完整工作流日志](${runUrl})`, '');
+            lines.push('> Android APK 使用本次 runner 自动生成的 debug 签名，不同构建生成的 APK 可能无法互相覆盖安装。构建产物和失败日志保留 7 天。');
+
+            const body = lines.join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const previous = comments.find(comment =>
+              comment.user?.login === 'github-actions[bot]' && comment.body?.includes(marker)
+            );
+
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: previous.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
